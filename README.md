@@ -1,18 +1,16 @@
 # blitz
 
-Fast one-off AI from the terminal, powered by Codex subscription auth.
+Fast one-off AI from the terminal, powered by OpenAI Codex subscription auth.
 
-`blitz` is a small Go CLI for quick, non-agentic requests. It reads input from stdin or arguments, sends it to Codex subscription auth or an OpenAI-compatible endpoint, and prints the result without starting a bloated agent harness.
+`blitz` is a small Go CLI for quick, non-agentic requests. It reads input from stdin or arguments, sends it to the Codex subscription endpoint, and prints the result without starting a bloated agent harness.
 
 ## Why Go
 
 The binary starts quickly, has no runtime package manager, and uses only the Go standard library. It is designed for scripts, text filters, launchers, and other places where you want one model call and then exit.
 
-## Auth Modes
+## Auth
 
-### Codex subscription login
-
-Use this when you want ChatGPT/Codex subscription auth instead of an API key:
+Use your OpenAI/Codex subscription login:
 
 ```sh
 blitz login
@@ -37,15 +35,7 @@ codex login
 cat input.txt | blitz
 ```
 
-### OpenAI-compatible API key
-
-Use `responses` or `chat` provider mode for ordinary OpenAI-compatible endpoints:
-
-```sh
-export OPENAI_API_KEY=sk-...
-cat input.txt | blitz -provider responses -model gpt-5.5
-cat input.txt | blitz -provider chat -base-url http://127.0.0.1:11434/v1 -model local-model
-```
+`blitz` is intentionally subscription-only. It does not support API keys or custom endpoints.
 
 ## Usage
 
@@ -58,7 +48,7 @@ blitz status
 
 ## Defaults
 
-Built-in defaults use `gpt-5.5`, reasoning off, fast mode on, and output streaming off. See effective defaults with:
+Built-in defaults use `gpt-5.5`, reasoning off, and fast mode on. Codex requires streamed Responses requests, so `blitz` always streams internally and prints output as it arrives. See effective defaults with:
 
 ```sh
 blitz
@@ -71,13 +61,12 @@ Persist defaults in `~/.blitz/config.json` with `blitz config set`:
 ```sh
 blitz config set model gpt-5.5
 blitz config set reasoning off
-blitz config set stream false
 blitz config set fast true
 blitz config set timeout 10m
 blitz config unset reasoning
 ```
 
-Supported config keys: `provider`, `model`, `base-url`, `codex-home`, `skills-dir`, `prompt`, `reasoning`, `max-output-tokens`, `timeout`, `stream`, and `fast`.
+Supported config keys: `model`, `codex-home`, `skills-dir`, `prompt`, `reasoning`, `max-output-tokens`, `timeout`, and `fast`.
 
 ## Skills
 
@@ -118,9 +107,9 @@ As of the current Codex implementation, Codex maps Fast mode to the Responses AP
 {"service_tier":"priority"}
 ```
 
-`blitz` follows that behavior: when `fast` is true and the Codex provider is used, it sends `service_tier: "priority"`. There is intentionally no user-facing service-tier setting; if Codex changes how Fast mode is represented, update this section and the `codexRequestBody` implementation.
+`blitz` follows that behavior: when `fast` is true, it sends `service_tier: "priority"`. There is intentionally no user-facing service-tier setting; if Codex changes how Fast mode is represented, update this section and the `codexRequestBody` implementation.
 
-Codex also currently builds Responses requests with `stream: true`, and the Codex backend rejects `stream: false` with `Stream must be set to true`. In `blitz`, `-stream=false` therefore means "do not print output incrementally" rather than "ask Codex for a non-streaming response": the Codex request still uses SSE, but `blitz` buffers the SSE text and prints it once complete. For `responses` and `chat` API-key providers, `-stream=false` still sends non-streaming API requests.
+Codex also currently builds Responses requests with `stream: true`, and the Codex backend rejects `stream: false` with `Stream must be set to true`. `blitz` therefore always sends `stream: true` and reads server-sent events (SSE).
 
 Reference checked against `openai/codex`:
 
@@ -132,29 +121,26 @@ Reference checked against `openai/codex`:
 ## Flags
 
 ```text
--provider          codex, responses, or chat
 -model             model name, default gpt-5.5
--base-url          OpenAI-compatible base URL
 -prompt            replacement system prompt
 -skills-dir        directory of skill markdown prompts
--stream            print output as it arrives, default false
--fast              for codex, request Fast mode via service_tier=priority; default true
+-fast              request Fast mode via service_tier=priority; default true
 -reasoning         reasoning effort, default off; use low/medium/high or off/none
 -max-output-tokens optional output cap
+-timeout           request timeout, default 10m
+-codex-home        Codex home containing auth.json
+-blitz-home        Blitz home containing auth.json and config.json
 ```
 
 Environment variables:
 
 ```text
-BLITZ_PROVIDER
 BLITZ_MODEL
-BLITZ_BASE_URL
 BLITZ_PROMPT
 BLITZ_SKILLS_DIR
 BLITZ_REASONING_EFFORT
 BLITZ_HOME
 CODEX_HOME
-OPENAI_API_KEY
 ```
 
 ## Build

@@ -13,26 +13,10 @@ import (
 func clearBlitzEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{
-		"BLITZ_PROVIDER", "BLITZ_MODEL", "BLITZ_BASE_URL", "BLITZ_PROMPT",
-		"BLITZ_REASONING_EFFORT", "BLITZ_HOME",
-		"BLITZ_SKILLS_DIR", "CODEX_HOME",
+		"BLITZ_MODEL", "BLITZ_PROMPT", "BLITZ_REASONING_EFFORT",
+		"BLITZ_HOME", "BLITZ_SKILLS_DIR", "CODEX_HOME",
 	} {
 		t.Setenv(key, "")
-	}
-}
-
-func TestResolveCodexURL(t *testing.T) {
-	tests := map[string]string{
-		"":                                      "https://chatgpt.com/backend-api/codex/responses",
-		"https://chatgpt.com/backend-api":       "https://chatgpt.com/backend-api/codex/responses",
-		"https://chatgpt.com/backend-api/codex": "https://chatgpt.com/backend-api/codex/responses",
-		"https://example.test/codex/responses":  "https://example.test/codex/responses",
-		"https://example.test/base///":          "https://example.test/base/codex/responses",
-	}
-	for input, want := range tests {
-		if got := resolveCodexURL(input); got != want {
-			t.Fatalf("resolveCodexURL(%q) = %q, want %q", input, got, want)
-		}
 	}
 }
 
@@ -41,7 +25,6 @@ func TestCodexRequestBodyUsesMessageListInput(t *testing.T) {
 		model:           "gpt-5.4-mini",
 		prompt:          "Improve it",
 		input:           "Tell me a joke",
-		stream:          true,
 		reasoningEffort: "low",
 	})
 
@@ -79,9 +62,6 @@ func TestDefaultSettingsUseGPT55WithoutReasoning(t *testing.T) {
 	}
 	if body["stream"] != true {
 		t.Fatalf("codex request stream = %#v, want true", body["stream"])
-	}
-	if cfg.stream {
-		t.Fatalf("stream = true, want default false")
 	}
 }
 
@@ -123,7 +103,7 @@ func TestPrintStatusShowsDefaults(t *testing.T) {
 	var out bytes.Buffer
 	printStatus(&out, cfg, skills)
 	got := out.String()
-	if !strings.Contains(got, "model: gpt-5.5") || !strings.Contains(got, "reasoning: off") || !strings.Contains(got, "stream: false") {
+	if !strings.Contains(got, "model: gpt-5.5") || !strings.Contains(got, "reasoning: off") || !strings.Contains(got, "fast: true") {
 		t.Fatalf("status output missing defaults:\n%s", got)
 	}
 }
@@ -165,7 +145,7 @@ func TestParseRunFlagsRejectsSkillAndPromptTogether(t *testing.T) {
 	}
 }
 
-func TestPostJSONReadsSSEWhenOutputStreamingDisabled(t *testing.T) {
+func TestPostJSONReadsSSE(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"done\"}\n\n"))
@@ -174,7 +154,7 @@ func TestPostJSONReadsSSEWhenOutputStreamingDisabled(t *testing.T) {
 	defer server.Close()
 
 	var out bytes.Buffer
-	err := postJSON(t.Context(), server.URL, map[string]string{"Content-Type": "application/json"}, map[string]any{"stream": true}, false, &out)
+	err := postJSON(t.Context(), server.URL, map[string]string{"Content-Type": "application/json"}, map[string]any{"stream": true}, &out)
 	if err != nil {
 		t.Fatal(err)
 	}

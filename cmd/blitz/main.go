@@ -36,10 +36,7 @@ const (
 )
 
 type config struct {
-	provider        string
 	model           string
-	baseURL         string
-	apiKey          string
 	codexHome       string
 	blitzHome       string
 	skillsDir       string
@@ -48,22 +45,18 @@ type config struct {
 	reasoningEffort string
 	maxOutputTokens int
 	timeout         time.Duration
-	stream          bool
 	fast            bool
 	input           string
 }
 
 type userSettings struct {
-	Provider        *string `json:"provider,omitempty"`
 	Model           *string `json:"model,omitempty"`
-	BaseURL         *string `json:"base_url,omitempty"`
 	CodexHome       *string `json:"codex_home,omitempty"`
 	SkillsDir       *string `json:"skills_dir,omitempty"`
 	Prompt          *string `json:"prompt,omitempty"`
 	ReasoningEffort *string `json:"reasoning_effort,omitempty"`
 	MaxOutputTokens *int    `json:"max_output_tokens,omitempty"`
 	Timeout         *string `json:"timeout,omitempty"`
-	Stream          *bool   `json:"stream,omitempty"`
 	Fast            *bool   `json:"fast,omitempty"`
 }
 
@@ -142,19 +135,15 @@ func parseRunFlags(args []string) (config, error) {
 
 	fs := flag.NewFlagSet("blitz", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	fs.StringVar(&cfg.provider, "provider", cfg.provider, "codex, responses, or chat")
 	fs.StringVar(&cfg.model, "model", cfg.model, "model name")
-	fs.StringVar(&cfg.baseURL, "base-url", cfg.baseURL, "OpenAI-compatible base URL")
-	fs.StringVar(&cfg.apiKey, "api-key", cfg.apiKey, "API key for responses/chat providers")
 	fs.StringVar(&cfg.codexHome, "codex-home", cfg.codexHome, "Codex home containing auth.json")
 	fs.StringVar(&cfg.blitzHome, "blitz-home", cfg.blitzHome, "Blitz home containing auth.json")
 	fs.StringVar(&cfg.skillsDir, "skills-dir", cfg.skillsDir, "directory of skill markdown prompts")
 	fs.StringVar(&cfg.prompt, "prompt", cfg.prompt, "system prompt")
-	fs.StringVar(&cfg.reasoningEffort, "reasoning", cfg.reasoningEffort, "reasoning effort for Responses/Codex")
+	fs.StringVar(&cfg.reasoningEffort, "reasoning", cfg.reasoningEffort, "reasoning effort for Codex")
 	fs.IntVar(&cfg.maxOutputTokens, "max-output-tokens", 0, "optional max output tokens")
 	fs.DurationVar(&cfg.timeout, "timeout", cfg.timeout, "request timeout")
-	fs.BoolVar(&cfg.stream, "stream", cfg.stream, "stream output as it arrives")
-	fs.BoolVar(&cfg.fast, "fast", cfg.fast, "for codex, request priority service tier when unset")
+	fs.BoolVar(&cfg.fast, "fast", cfg.fast, "request Fast mode via Codex priority service tier")
 
 	skills, err := discoverSkills(cfg.skillsDir)
 	if err != nil {
@@ -222,17 +211,13 @@ func initialConfig(args []string) (config, error) {
 	home, _ := os.UserHomeDir()
 	blitzHome := preFlagString(args, "blitz-home", envDefault("BLITZ_HOME", filepath.Join(home, ".blitz")))
 	cfg := config{
-		provider:        "codex",
 		model:           "gpt-5.5",
-		baseURL:         "",
-		apiKey:          os.Getenv("OPENAI_API_KEY"),
 		codexHome:       filepath.Join(home, ".codex"),
 		blitzHome:       blitzHome,
 		skillsDir:       filepath.Join(blitzHome, "skills"),
 		prompt:          defaultPrompt,
 		reasoningEffort: "",
 		timeout:         10 * time.Minute,
-		stream:          false,
 		fast:            true,
 	}
 	settings, err := loadSettings(settingsPath(blitzHome))
@@ -290,14 +275,8 @@ func saveSettings(path string, settings userSettings) error {
 }
 
 func applySettings(cfg *config, settings userSettings) error {
-	if settings.Provider != nil {
-		cfg.provider = *settings.Provider
-	}
 	if settings.Model != nil {
 		cfg.model = *settings.Model
-	}
-	if settings.BaseURL != nil {
-		cfg.baseURL = *settings.BaseURL
 	}
 	if settings.CodexHome != nil {
 		cfg.codexHome = *settings.CodexHome
@@ -321,9 +300,6 @@ func applySettings(cfg *config, settings userSettings) error {
 		}
 		cfg.timeout = timeout
 	}
-	if settings.Stream != nil {
-		cfg.stream = *settings.Stream
-	}
 	if settings.Fast != nil {
 		cfg.fast = *settings.Fast
 	}
@@ -331,9 +307,7 @@ func applySettings(cfg *config, settings userSettings) error {
 }
 
 func applyEnv(cfg *config) {
-	cfg.provider = envDefault("BLITZ_PROVIDER", cfg.provider)
 	cfg.model = envDefault("BLITZ_MODEL", cfg.model)
-	cfg.baseURL = envDefault("BLITZ_BASE_URL", cfg.baseURL)
 	cfg.codexHome = envDefault("CODEX_HOME", cfg.codexHome)
 	cfg.blitzHome = envDefault("BLITZ_HOME", cfg.blitzHome)
 	cfg.skillsDir = envDefault("BLITZ_SKILLS_DIR", cfg.skillsDir)
@@ -496,12 +470,8 @@ func setSetting(settings *userSettings, key, value string) error {
 	key = normalizeSettingKey(key)
 	s := value
 	switch key {
-	case "provider":
-		settings.Provider = &s
 	case "model":
 		settings.Model = &s
-	case "base-url":
-		settings.BaseURL = &s
 	case "codex-home":
 		settings.CodexHome = &s
 	case "skills-dir":
@@ -524,12 +494,6 @@ func setSetting(settings *userSettings, key, value string) error {
 			return fmt.Errorf("timeout must be a duration like 30s or 10m: %w", err)
 		}
 		settings.Timeout = &s
-	case "stream":
-		b, err := strconv.ParseBool(value)
-		if err != nil {
-			return fmt.Errorf("stream must be true or false")
-		}
-		settings.Stream = &b
 	case "fast":
 		b, err := strconv.ParseBool(value)
 		if err != nil {
@@ -544,12 +508,8 @@ func setSetting(settings *userSettings, key, value string) error {
 
 func unsetSetting(settings *userSettings, key string) error {
 	switch normalizeSettingKey(key) {
-	case "provider":
-		settings.Provider = nil
 	case "model":
 		settings.Model = nil
-	case "base-url":
-		settings.BaseURL = nil
 	case "codex-home":
 		settings.CodexHome = nil
 	case "skills-dir":
@@ -562,8 +522,6 @@ func unsetSetting(settings *userSettings, key string) error {
 		settings.MaxOutputTokens = nil
 	case "timeout":
 		settings.Timeout = nil
-	case "stream":
-		settings.Stream = nil
 	case "fast":
 		settings.Fast = nil
 	default:
@@ -591,20 +549,17 @@ func isOffValue(value string) bool {
 }
 
 func unknownSettingError(key string) error {
-	return fmt.Errorf("unknown setting %q (use provider, model, base-url, codex-home, skills-dir, prompt, reasoning, max-output-tokens, timeout, stream, or fast)", key)
+	return fmt.Errorf("unknown setting %q (use model, codex-home, skills-dir, prompt, reasoning, max-output-tokens, timeout, or fast)", key)
 }
 
 func printStatus(out io.Writer, cfg config, skills []skillPrompt) {
 	fmt.Fprintln(out, "blitz defaults")
 	fmt.Fprintf(out, "config: %s\n", settingsPath(cfg.blitzHome))
-	fmt.Fprintf(out, "provider: %s\n", cfg.provider)
 	fmt.Fprintf(out, "model: %s\n", cfg.model)
 	fmt.Fprintf(out, "reasoning: %s\n", displayValue(cfg.reasoningEffort, "off"))
-	fmt.Fprintf(out, "stream: %t\n", cfg.stream)
 	fmt.Fprintf(out, "fast: %t\n", cfg.fast)
 	fmt.Fprintf(out, "timeout: %s\n", cfg.timeout)
 	fmt.Fprintf(out, "max_output_tokens: %s\n", displayInt(cfg.maxOutputTokens, "unlimited"))
-	fmt.Fprintf(out, "base_url: %s\n", displayValue(cfg.baseURL, "default"))
 	fmt.Fprintf(out, "skills_dir: %s\n", cfg.skillsDir)
 	fmt.Fprintf(out, "skill_count: %d\n", len(skills))
 	fmt.Fprintf(out, "prompt: %s\n", oneLine(cfg.prompt, 96))
@@ -633,16 +588,7 @@ func oneLine(value string, limit int) string {
 }
 
 func enhance(ctx context.Context, cfg config, out io.Writer) error {
-	switch strings.ToLower(cfg.provider) {
-	case "codex", "openai-codex":
-		return callCodex(ctx, cfg, out)
-	case "responses", "openai-responses":
-		return callResponses(ctx, cfg, out)
-	case "chat", "chat-completions", "openai-chat":
-		return callChat(ctx, cfg, out)
-	default:
-		return fmt.Errorf("unknown provider %q", cfg.provider)
-	}
+	return callCodex(ctx, cfg, out)
 }
 
 func callCodex(ctx context.Context, cfg config, out io.Writer) error {
@@ -678,7 +624,7 @@ func callCodex(ctx context.Context, cfg config, out io.Writer) error {
 		return errors.New("could not find chatgpt account id in Codex auth")
 	}
 
-	endpoint := resolveCodexURL(cfg.baseURL)
+	endpoint := codexBaseURL + "/codex/responses"
 	body := codexRequestBody(cfg)
 
 	headers := map[string]string{
@@ -691,7 +637,7 @@ func callCodex(ctx context.Context, cfg config, out io.Writer) error {
 		"User-Agent":          "blitz/0.1",
 		"X-Client-Request-Id": randomID(),
 	}
-	return postJSON(ctx, endpoint, headers, body, cfg.stream, out)
+	return postJSON(ctx, endpoint, headers, body, out)
 }
 
 func codexRequestBody(cfg config) map[string]any {
@@ -716,42 +662,6 @@ func codexRequestBody(cfg config) map[string]any {
 	return body
 }
 
-func callResponses(ctx context.Context, cfg config, out io.Writer) error {
-	if cfg.apiKey == "" {
-		return errors.New("OPENAI_API_KEY or -api-key is required for responses provider")
-	}
-	endpoint := joinEndpoint(envDefault("BLITZ_BASE_URL", cfg.baseURL), "https://api.openai.com/v1", "/responses")
-	body := map[string]any{
-		"model":        cfg.model,
-		"instructions": cfg.prompt,
-		"input":        cfg.input,
-		"stream":       cfg.stream,
-	}
-	addResponsesOptions(body, cfg)
-	headers := bearerHeaders(cfg.apiKey, cfg.stream)
-	return postJSON(ctx, endpoint, headers, body, cfg.stream, out)
-}
-
-func callChat(ctx context.Context, cfg config, out io.Writer) error {
-	if cfg.apiKey == "" {
-		return errors.New("OPENAI_API_KEY or -api-key is required for chat provider")
-	}
-	endpoint := joinEndpoint(envDefault("BLITZ_BASE_URL", cfg.baseURL), "https://api.openai.com/v1", "/chat/completions")
-	body := map[string]any{
-		"model": cfg.model,
-		"messages": []map[string]string{
-			{"role": "system", "content": cfg.prompt},
-			{"role": "user", "content": cfg.input},
-		},
-		"stream": cfg.stream,
-	}
-	if cfg.maxOutputTokens > 0 {
-		body["max_completion_tokens"] = cfg.maxOutputTokens
-	}
-	headers := bearerHeaders(cfg.apiKey, cfg.stream)
-	return postJSON(ctx, endpoint, headers, body, cfg.stream, out)
-}
-
 func addResponsesOptions(body map[string]any, cfg config) {
 	if cfg.reasoningEffort != "" {
 		body["reasoning"] = map[string]string{"effort": cfg.reasoningEffort}
@@ -761,7 +671,7 @@ func addResponsesOptions(body map[string]any, cfg config) {
 	}
 }
 
-func postJSON(ctx context.Context, endpoint string, headers map[string]string, body map[string]any, stream bool, out io.Writer) error {
+func postJSON(ctx context.Context, endpoint string, headers map[string]string, body map[string]any, out io.Writer) error {
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return err
@@ -783,15 +693,7 @@ func postJSON(ctx context.Context, endpoint string, headers map[string]string, b
 		return responseError(resp)
 	}
 	if isEventStream(resp.Header.Get("Content-Type")) {
-		if stream {
-			return readSSE(resp.Body, out)
-		}
-		var buffered bytes.Buffer
-		if err := readSSE(resp.Body, &buffered); err != nil {
-			return err
-		}
-		_, err := out.Write(buffered.Bytes())
-		return err
+		return readSSE(resp.Body, out)
 	}
 	return readJSONResponse(resp.Body, out)
 }
@@ -1226,43 +1128,6 @@ func decodeJWTPayload(token string, dst any) bool {
 	return json.Unmarshal(data, dst) == nil
 }
 
-func bearerHeaders(apiKey string, stream bool) map[string]string {
-	headers := map[string]string{
-		"Authorization": "Bearer " + apiKey,
-		"Content-Type":  "application/json",
-		"User-Agent":    "blitz/0.1",
-	}
-	if stream {
-		headers["Accept"] = "text/event-stream"
-	}
-	return headers
-}
-
-func resolveCodexURL(base string) string {
-	raw := strings.TrimRight(base, "/")
-	if raw == "" {
-		raw = codexBaseURL
-	}
-	if strings.HasSuffix(raw, "/codex/responses") {
-		return raw
-	}
-	if strings.HasSuffix(raw, "/codex") {
-		return raw + "/responses"
-	}
-	return raw + "/codex/responses"
-}
-
-func joinEndpoint(base, fallback, path string) string {
-	raw := strings.TrimRight(base, "/")
-	if raw == "" {
-		raw = fallback
-	}
-	if strings.HasSuffix(raw, path) {
-		return raw
-	}
-	return raw + path
-}
-
 func responseError(resp *http.Response) error {
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	msg := strings.TrimSpace(string(body))
@@ -1295,7 +1160,7 @@ func randomID() string {
 func printUsage() {
 	cfg, skills, err := statusConfig(nil)
 	if err != nil {
-		cfg = config{provider: "codex", model: "gpt-5.5", prompt: defaultPrompt, timeout: 10 * time.Minute, stream: false, fast: true}
+		cfg = config{model: "gpt-5.5", prompt: defaultPrompt, timeout: 10 * time.Minute, fast: true}
 	}
 	fmt.Fprintf(os.Stderr, `blitz - fast one-off Codex CLI
 
@@ -1314,22 +1179,21 @@ Defaults to Codex subscription auth. Run blitz login or codex login first.
 Skill files in ~/.blitz/skills become flags: summarize.md -> --summarize.
 
 Current defaults:
-  provider: %s
   model: %s
   reasoning: %s
-  stream: %t
   fast: %t
   skills_dir: %s
   skill_count: %d
 
 Flags:
-  -provider codex|responses|chat
   -model %s
-  -base-url URL
   -prompt TEXT
   -skills-dir DIR
-  -stream=%t
   -fast=%t
   -reasoning %s (use "off" or "none" to disable)
-`, cfg.provider, cfg.model, displayValue(cfg.reasoningEffort, "off"), cfg.stream, cfg.fast, cfg.skillsDir, len(skills), cfg.model, cfg.stream, cfg.fast, displayValue(cfg.reasoningEffort, "off"))
+  -max-output-tokens N
+  -timeout %s
+  -codex-home DIR
+  -blitz-home DIR
+`, cfg.model, displayValue(cfg.reasoningEffort, "off"), cfg.fast, cfg.skillsDir, len(skills), cfg.model, cfg.fast, displayValue(cfg.reasoningEffort, "off"), cfg.timeout)
 }
