@@ -48,7 +48,7 @@ blitz status
 
 ## Defaults
 
-Built-in defaults use `gpt-5.5`, reasoning off, and fast mode on. Codex requires streamed Responses requests, so `blitz` always streams internally and prints output as it arrives. See effective defaults with:
+Built-in defaults use `gpt-5.4`, reasoning off, and fast mode on. Codex requires streamed Responses requests, so `blitz` always streams internally and prints output as it arrives. See effective defaults with:
 
 ```sh
 blitz
@@ -59,7 +59,7 @@ blitz --help
 Persist defaults in `~/.blitz/config.json` with `blitz config set`:
 
 ```sh
-blitz config set model gpt-5.5
+blitz config set model gpt-5.4
 blitz config set reasoning off
 blitz config set fast true
 blitz config set timeout 10m
@@ -121,7 +121,7 @@ Reference checked against `openai/codex`:
 ## Flags
 
 ```text
--model             model name, default gpt-5.5
+-model             model name, default gpt-5.4
 -prompt            replacement system prompt
 -skills-dir        directory of skill markdown prompts
 -fast              request Fast mode via service_tier=priority; default true

@@ -44,14 +44,14 @@ func TestCodexRequestBodyUsesMessageListInput(t *testing.T) {
 	}
 }
 
-func TestDefaultSettingsUseGPT55WithoutReasoning(t *testing.T) {
+func TestDefaultSettingsUseGPT54WithoutReasoning(t *testing.T) {
 	clearBlitzEnv(t)
 	cfg, err := parseRunFlags([]string{"--blitz-home", t.TempDir(), "Hello"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.model != "gpt-5.5" {
-		t.Fatalf("model = %q, want gpt-5.5", cfg.model)
+	if cfg.model != "gpt-5.4" {
+		t.Fatalf("model = %q, want gpt-5.4", cfg.model)
 	}
 	if cfg.reasoningEffort != "" {
 		t.Fatalf("reasoning = %q, want disabled", cfg.reasoningEffort)
@@ -103,7 +103,7 @@ func TestPrintStatusShowsDefaults(t *testing.T) {
 	var out bytes.Buffer
 	printStatus(&out, cfg, skills)
 	got := out.String()
-	if !strings.Contains(got, "model: gpt-5.5") || !strings.Contains(got, "reasoning: off") || !strings.Contains(got, "fast: true") {
+	if !strings.Contains(got, "model: gpt-5.4") || !strings.Contains(got, "reasoning: off") || !strings.Contains(got, "fast: true") {
 		t.Fatalf("status output missing defaults:\n%s", got)
 	}
 }

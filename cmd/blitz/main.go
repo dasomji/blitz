@@ -211,7 +211,7 @@ func initialConfig(args []string) (config, error) {
 	home, _ := os.UserHomeDir()
 	blitzHome := preFlagString(args, "blitz-home", envDefault("BLITZ_HOME", filepath.Join(home, ".blitz")))
 	cfg := config{
-		model:           "gpt-5.5",
+		model:           "gpt-5.4",
 		codexHome:       filepath.Join(home, ".codex"),
 		blitzHome:       blitzHome,
 		skillsDir:       filepath.Join(blitzHome, "skills"),
@@ -1160,7 +1160,7 @@ func randomID() string {
 func printUsage() {
 	cfg, skills, err := statusConfig(nil)
 	if err != nil {
-		cfg = config{model: "gpt-5.5", prompt: defaultPrompt, timeout: 10 * time.Minute, fast: true}
+		cfg = config{model: "gpt-5.4", prompt: defaultPrompt, timeout: 10 * time.Minute, fast: true}
 	}
 	fmt.Fprintf(os.Stderr, `blitz - fast one-off Codex CLI
 
@@ -1169,7 +1169,7 @@ Usage:
   blitz --summarize "paste long text here"
   cat input.txt | blitz [flags]
   blitz status
-  blitz config set model gpt-5.5
+  blitz config set model gpt-5.4
   blitz config set reasoning off
   blitz login
   blitz auth
