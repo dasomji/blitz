@@ -54,7 +54,30 @@ cat raw.txt | blitz > enhanced.txt
 blitz "um this is a raw transcript and it needs punctuation"
 blitz -model gpt-5.5 -reasoning low < raw.txt
 blitz -fast=false -service-tier "" < raw.txt
+blitz status
 ```
+
+## Defaults
+
+Built-in defaults use `gpt-5.5` with reasoning off. See the effective defaults with:
+
+```sh
+blitz
+blitz status
+blitz --help
+```
+
+Persist defaults in `~/.blitz/config.json` with `blitz config set`:
+
+```sh
+blitz config set model gpt-5.5
+blitz config set reasoning off
+blitz config set stream true
+blitz config set timeout 10m
+blitz config unset reasoning
+```
+
+Supported config keys: `provider`, `model`, `base-url`, `codex-home`, `skills-dir`, `prompt`, `service-tier`, `reasoning`, `max-output-tokens`, `timeout`, `stream`, and `fast`.
 
 ## Skills
 
@@ -77,14 +100,14 @@ Useful flags:
 
 ```text
 -provider          codex, responses, or chat
--model             model name, default gpt-5.4-mini
+-model             model name, default gpt-5.5
 -base-url          OpenAI-compatible base URL
 -prompt            replacement transcript enhancement prompt
 -skills-dir        directory of skill markdown prompts
 -stream            stream output as it arrives, default true
 -fast              for codex, request priority service tier when unset
 -service-tier      explicit Responses service_tier
--reasoning         reasoning effort, default low
+-reasoning         reasoning effort, default off; use low/medium/high or off/none
 -max-output-tokens optional output cap
 ```
 

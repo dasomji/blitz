@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -53,6 +54,21 @@ type config struct {
 	input           string
 }
 
+type userSettings struct {
+	Provider        *string `json:"provider,omitempty"`
+	Model           *string `json:"model,omitempty"`
+	BaseURL         *string `json:"base_url,omitempty"`
+	CodexHome       *string `json:"codex_home,omitempty"`
+	SkillsDir       *string `json:"skills_dir,omitempty"`
+	Prompt          *string `json:"prompt,omitempty"`
+	ServiceTier     *string `json:"service_tier,omitempty"`
+	ReasoningEffort *string `json:"reasoning_effort,omitempty"`
+	MaxOutputTokens *int    `json:"max_output_tokens,omitempty"`
+	Timeout         *string `json:"timeout,omitempty"`
+	Stream          *bool   `json:"stream,omitempty"`
+	Fast            *bool   `json:"fast,omitempty"`
+}
+
 type authFile struct {
 	Tokens      tokenData `json:"tokens"`
 	LastRefresh string    `json:"last_refresh,omitempty"`
@@ -79,6 +95,15 @@ func main() {
 }
 
 func run(args []string) error {
+	if len(args) == 0 && stdinIsTerminal() {
+		cfg, skills, err := statusConfig(args)
+		if err != nil {
+			return err
+		}
+		printStatus(os.Stdout, cfg, skills)
+		fmt.Fprintln(os.Stdout, "\nPass text as args/stdin, or run `blitz --help`.")
+		return nil
+	}
 	if len(args) > 0 {
 		switch args[0] {
 		case "login":
@@ -87,6 +112,15 @@ func run(args []string) error {
 			return logoutCommand(args[1:])
 		case "auth":
 			return authCommand(args[1:])
+		case "status":
+			cfg, skills, err := statusConfig(args[1:])
+			if err != nil {
+				return err
+			}
+			printStatus(os.Stdout, cfg, skills)
+			return nil
+		case "config":
+			return configCommand(args[1:])
 		case "help", "-h", "--help":
 			printUsage()
 			return nil
@@ -103,23 +137,9 @@ func run(args []string) error {
 }
 
 func parseRunFlags(args []string) (config, error) {
-	home, _ := os.UserHomeDir()
-	blitzHome := preFlagString(args, "blitz-home", envDefault("BLITZ_HOME", filepath.Join(home, ".blitz")))
-	skillsDir := preFlagString(args, "skills-dir", envDefault("BLITZ_SKILLS_DIR", filepath.Join(blitzHome, "skills")))
-	cfg := config{
-		provider:        envDefault("BLITZ_PROVIDER", "codex"),
-		model:           envDefault("BLITZ_MODEL", "gpt-5.4-mini"),
-		baseURL:         os.Getenv("BLITZ_BASE_URL"),
-		apiKey:          os.Getenv("OPENAI_API_KEY"),
-		codexHome:       envDefault("CODEX_HOME", filepath.Join(home, ".codex")),
-		blitzHome:       blitzHome,
-		skillsDir:       skillsDir,
-		prompt:          envDefault("BLITZ_PROMPT", defaultPrompt),
-		serviceTier:     os.Getenv("BLITZ_SERVICE_TIER"),
-		reasoningEffort: envDefault("BLITZ_REASONING_EFFORT", "low"),
-		timeout:         10 * time.Minute,
-		stream:          true,
-		fast:            true,
+	cfg, err := initialConfig(args)
+	if err != nil {
+		return cfg, err
 	}
 
 	fs := flag.NewFlagSet("blitz", flag.ContinueOnError)
@@ -154,6 +174,12 @@ func parseRunFlags(args []string) (config, error) {
 	if err := fs.Parse(args); err != nil {
 		printUsage()
 		return cfg, err
+	}
+	if isOffValue(cfg.reasoningEffort) {
+		cfg.reasoningEffort = ""
+	}
+	if isOffValue(cfg.serviceTier) {
+		cfg.serviceTier = ""
 	}
 
 	explicitPrompt := false
@@ -196,6 +222,146 @@ func parseRunFlags(args []string) (config, error) {
 		return cfg, errors.New("provide transcript text as args or stdin")
 	}
 	return cfg, nil
+}
+
+func initialConfig(args []string) (config, error) {
+	home, _ := os.UserHomeDir()
+	blitzHome := preFlagString(args, "blitz-home", envDefault("BLITZ_HOME", filepath.Join(home, ".blitz")))
+	cfg := config{
+		provider:        "codex",
+		model:           "gpt-5.5",
+		baseURL:         "",
+		apiKey:          os.Getenv("OPENAI_API_KEY"),
+		codexHome:       filepath.Join(home, ".codex"),
+		blitzHome:       blitzHome,
+		skillsDir:       filepath.Join(blitzHome, "skills"),
+		prompt:          defaultPrompt,
+		serviceTier:     "",
+		reasoningEffort: "",
+		timeout:         10 * time.Minute,
+		stream:          true,
+		fast:            true,
+	}
+	settings, err := loadSettings(settingsPath(blitzHome))
+	if err != nil {
+		return cfg, err
+	}
+	if err := applySettings(&cfg, settings); err != nil {
+		return cfg, err
+	}
+	applyEnv(&cfg)
+	if isOffValue(cfg.reasoningEffort) {
+		cfg.reasoningEffort = ""
+	}
+	if isOffValue(cfg.serviceTier) {
+		cfg.serviceTier = ""
+	}
+	cfg.blitzHome = preFlagString(args, "blitz-home", cfg.blitzHome)
+	cfg.skillsDir = preFlagString(args, "skills-dir", cfg.skillsDir)
+	return cfg, nil
+}
+
+func statusConfig(args []string) (config, []skillPrompt, error) {
+	cfg, err := initialConfig(args)
+	if err != nil {
+		return cfg, nil, err
+	}
+	skills, err := discoverSkills(cfg.skillsDir)
+	if err != nil {
+		return cfg, nil, err
+	}
+	return cfg, skills, nil
+}
+
+func loadSettings(path string) (userSettings, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return userSettings{}, nil
+	}
+	if err != nil {
+		return userSettings{}, fmt.Errorf("read config: %w", err)
+	}
+	var settings userSettings
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return userSettings{}, fmt.Errorf("parse config %s: %w", path, err)
+	}
+	return settings, nil
+}
+
+func saveSettings(path string, settings userSettings) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(data, '\n'), 0o600)
+}
+
+func applySettings(cfg *config, settings userSettings) error {
+	if settings.Provider != nil {
+		cfg.provider = *settings.Provider
+	}
+	if settings.Model != nil {
+		cfg.model = *settings.Model
+	}
+	if settings.BaseURL != nil {
+		cfg.baseURL = *settings.BaseURL
+	}
+	if settings.CodexHome != nil {
+		cfg.codexHome = *settings.CodexHome
+	}
+	if settings.SkillsDir != nil {
+		cfg.skillsDir = *settings.SkillsDir
+	}
+	if settings.Prompt != nil {
+		cfg.prompt = *settings.Prompt
+	}
+	if settings.ServiceTier != nil {
+		cfg.serviceTier = *settings.ServiceTier
+	}
+	if settings.ReasoningEffort != nil {
+		cfg.reasoningEffort = *settings.ReasoningEffort
+	}
+	if settings.MaxOutputTokens != nil {
+		cfg.maxOutputTokens = *settings.MaxOutputTokens
+	}
+	if settings.Timeout != nil {
+		timeout, err := time.ParseDuration(*settings.Timeout)
+		if err != nil {
+			return fmt.Errorf("invalid config timeout %q: %w", *settings.Timeout, err)
+		}
+		cfg.timeout = timeout
+	}
+	if settings.Stream != nil {
+		cfg.stream = *settings.Stream
+	}
+	if settings.Fast != nil {
+		cfg.fast = *settings.Fast
+	}
+	return nil
+}
+
+func applyEnv(cfg *config) {
+	cfg.provider = envDefault("BLITZ_PROVIDER", cfg.provider)
+	cfg.model = envDefault("BLITZ_MODEL", cfg.model)
+	cfg.baseURL = envDefault("BLITZ_BASE_URL", cfg.baseURL)
+	cfg.codexHome = envDefault("CODEX_HOME", cfg.codexHome)
+	cfg.blitzHome = envDefault("BLITZ_HOME", cfg.blitzHome)
+	cfg.skillsDir = envDefault("BLITZ_SKILLS_DIR", cfg.skillsDir)
+	cfg.prompt = envDefault("BLITZ_PROMPT", cfg.prompt)
+	cfg.serviceTier = envDefault("BLITZ_SERVICE_TIER", cfg.serviceTier)
+	cfg.reasoningEffort = envDefault("BLITZ_REASONING_EFFORT", cfg.reasoningEffort)
+}
+
+func settingsPath(blitzHome string) string {
+	return filepath.Join(blitzHome, "config.json")
+}
+
+func stdinIsTerminal() bool {
+	info, err := os.Stdin.Stat()
+	return err == nil && (info.Mode()&os.ModeCharDevice) != 0
 }
 
 type skillPrompt struct {
@@ -280,6 +446,223 @@ func preFlagString(args []string, name, fallback string) string {
 		}
 	}
 	return fallback
+}
+
+func configCommand(args []string) error {
+	home, _ := os.UserHomeDir()
+	defaultHome := envDefault("BLITZ_HOME", filepath.Join(home, ".blitz"))
+	blitzHome := preFlagString(args, "blitz-home", defaultHome)
+	path := settingsPath(blitzHome)
+	settings, err := loadSettings(path)
+	if err != nil {
+		return err
+	}
+
+	fs := flag.NewFlagSet("config", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.StringVar(&blitzHome, "blitz-home", blitzHome, "Blitz home containing config.json")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	rest := fs.Args()
+	if len(rest) == 0 || rest[0] == "show" {
+		cfg, skills, err := statusConfig([]string{"--blitz-home", blitzHome})
+		if err != nil {
+			return err
+		}
+		printStatus(os.Stdout, cfg, skills)
+		return nil
+	}
+	if rest[0] == "path" {
+		fmt.Fprintln(os.Stdout, path)
+		return nil
+	}
+	if rest[0] == "set" {
+		if len(rest) < 3 {
+			return errors.New("usage: blitz config set <key> <value>")
+		}
+		if err := setSetting(&settings, rest[1], strings.Join(rest[2:], " ")); err != nil {
+			return err
+		}
+		if err := saveSettings(path, settings); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stdout, "Saved %s\n", path)
+		return nil
+	}
+	if rest[0] == "unset" {
+		if len(rest) != 2 {
+			return errors.New("usage: blitz config unset <key>")
+		}
+		if err := unsetSetting(&settings, rest[1]); err != nil {
+			return err
+		}
+		if err := saveSettings(path, settings); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stdout, "Saved %s\n", path)
+		return nil
+	}
+	return fmt.Errorf("unknown config command %q", rest[0])
+}
+
+func setSetting(settings *userSettings, key, value string) error {
+	key = normalizeSettingKey(key)
+	s := value
+	switch key {
+	case "provider":
+		settings.Provider = &s
+	case "model":
+		settings.Model = &s
+	case "base-url":
+		settings.BaseURL = &s
+	case "codex-home":
+		settings.CodexHome = &s
+	case "skills-dir":
+		settings.SkillsDir = &s
+	case "prompt":
+		settings.Prompt = &s
+	case "service-tier":
+		if isOffValue(value) {
+			s = ""
+		}
+		settings.ServiceTier = &s
+	case "reasoning":
+		if isOffValue(value) {
+			s = ""
+		}
+		settings.ReasoningEffort = &s
+	case "max-output-tokens":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 {
+			return fmt.Errorf("max-output-tokens must be a non-negative integer")
+		}
+		settings.MaxOutputTokens = &n
+	case "timeout":
+		if _, err := time.ParseDuration(value); err != nil {
+			return fmt.Errorf("timeout must be a duration like 30s or 10m: %w", err)
+		}
+		settings.Timeout = &s
+	case "stream":
+		b, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("stream must be true or false")
+		}
+		settings.Stream = &b
+	case "fast":
+		b, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("fast must be true or false")
+		}
+		settings.Fast = &b
+	default:
+		return unknownSettingError(key)
+	}
+	return nil
+}
+
+func unsetSetting(settings *userSettings, key string) error {
+	switch normalizeSettingKey(key) {
+	case "provider":
+		settings.Provider = nil
+	case "model":
+		settings.Model = nil
+	case "base-url":
+		settings.BaseURL = nil
+	case "codex-home":
+		settings.CodexHome = nil
+	case "skills-dir":
+		settings.SkillsDir = nil
+	case "prompt":
+		settings.Prompt = nil
+	case "service-tier":
+		settings.ServiceTier = nil
+	case "reasoning":
+		settings.ReasoningEffort = nil
+	case "max-output-tokens":
+		settings.MaxOutputTokens = nil
+	case "timeout":
+		settings.Timeout = nil
+	case "stream":
+		settings.Stream = nil
+	case "fast":
+		settings.Fast = nil
+	default:
+		return unknownSettingError(key)
+	}
+	return nil
+}
+
+func normalizeSettingKey(key string) string {
+	key = strings.ToLower(strings.TrimSpace(key))
+	key = strings.ReplaceAll(key, "_", "-")
+	if key == "reasoning-effort" {
+		return "reasoning"
+	}
+	return key
+}
+
+func isOffValue(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "none", "off", "false", "no":
+		return true
+	default:
+		return false
+	}
+}
+
+func unknownSettingError(key string) error {
+	return fmt.Errorf("unknown setting %q (use provider, model, base-url, codex-home, skills-dir, prompt, service-tier, reasoning, max-output-tokens, timeout, stream, or fast)", key)
+}
+
+func printStatus(out io.Writer, cfg config, skills []skillPrompt) {
+	fmt.Fprintln(out, "blitz defaults")
+	fmt.Fprintf(out, "config: %s\n", settingsPath(cfg.blitzHome))
+	fmt.Fprintf(out, "provider: %s\n", cfg.provider)
+	fmt.Fprintf(out, "model: %s\n", cfg.model)
+	fmt.Fprintf(out, "reasoning: %s\n", displayValue(cfg.reasoningEffort, "off"))
+	fmt.Fprintf(out, "service_tier: %s\n", displayValue(cfg.serviceTier, "default"))
+	fmt.Fprintf(out, "stream: %t\n", cfg.stream)
+	fmt.Fprintf(out, "fast: %t\n", cfg.fast)
+	fmt.Fprintf(out, "timeout: %s\n", cfg.timeout)
+	fmt.Fprintf(out, "max_output_tokens: %s\n", displayInt(cfg.maxOutputTokens, "unlimited"))
+	fmt.Fprintf(out, "base_url: %s\n", displayValue(cfg.baseURL, "default"))
+	fmt.Fprintf(out, "skills_dir: %s\n", cfg.skillsDir)
+	fmt.Fprintf(out, "skills: %s\n", displaySkills(skills))
+	fmt.Fprintf(out, "prompt: %s\n", oneLine(cfg.prompt, 96))
+}
+
+func displayValue(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func displayInt(value int, fallback string) string {
+	if value == 0 {
+		return fallback
+	}
+	return strconv.Itoa(value)
+}
+
+func displaySkills(skills []skillPrompt) string {
+	if len(skills) == 0 {
+		return "none"
+	}
+	names := make([]string, 0, len(skills))
+	for _, skill := range skills {
+		names = append(names, "--"+skill.Name)
+	}
+	return strings.Join(names, ", ")
+}
+
+func oneLine(value string, limit int) string {
+	value = strings.Join(strings.Fields(value), " ")
+	if len(value) <= limit {
+		return value
+	}
+	return value[:limit-1] + "…"
 }
 
 func enhance(ctx context.Context, cfg config, out io.Writer) error {
@@ -938,12 +1321,19 @@ func randomID() string {
 }
 
 func printUsage() {
-	fmt.Fprintln(os.Stderr, `blitz - fast transcript enhancement CLI
+	cfg, skills, err := statusConfig(nil)
+	if err != nil {
+		cfg = config{provider: "codex", model: "gpt-5.5", prompt: defaultPrompt, timeout: 10 * time.Minute, stream: true, fast: true}
+	}
+	fmt.Fprintf(os.Stderr, `blitz - fast transcript enhancement CLI
 
 Usage:
   blitz [flags] "raw transcript text"
   blitz --transcript "raw transcript text"
   cat transcript.txt | blitz [flags]
+  blitz status
+  blitz config set model gpt-5.5
+  blitz config set reasoning off
   blitz login
   blitz auth
   blitz logout
@@ -951,14 +1341,23 @@ Usage:
 Defaults to Codex subscription auth. Run blitz login or codex login first.
 Skill files in ~/.blitz/skills become flags: transcript.md -> --transcript.
 
+Current defaults:
+  provider: %s
+  model: %s
+  reasoning: %s
+  service_tier: %s
+  skills_dir: %s
+  skills: %s
+
 Flags:
   -provider codex|responses|chat
-  -model gpt-5.4-mini
+  -model %s
   -base-url URL
   -prompt TEXT
   -skills-dir DIR
-  -stream=true
-  -fast=true
-  -service-tier priority
-  -reasoning low`)
+  -stream=%t
+  -fast=%t
+  -service-tier %s
+  -reasoning %s (use "off" or "none" to disable)
+`, cfg.provider, cfg.model, displayValue(cfg.reasoningEffort, "off"), displayValue(cfg.serviceTier, "default"), cfg.skillsDir, displaySkills(skills), cfg.model, cfg.stream, cfg.fast, displayValue(cfg.serviceTier, "default"), displayValue(cfg.reasoningEffort, "off"))
 }

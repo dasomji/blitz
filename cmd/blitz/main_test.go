@@ -8,6 +8,17 @@ import (
 	"testing"
 )
 
+func clearBlitzEnv(t *testing.T) {
+	t.Helper()
+	for _, key := range []string{
+		"BLITZ_PROVIDER", "BLITZ_MODEL", "BLITZ_BASE_URL", "BLITZ_PROMPT",
+		"BLITZ_SERVICE_TIER", "BLITZ_REASONING_EFFORT", "BLITZ_HOME",
+		"BLITZ_SKILLS_DIR", "CODEX_HOME",
+	} {
+		t.Setenv(key, "")
+	}
+}
+
 func TestResolveCodexURL(t *testing.T) {
 	tests := map[string]string{
 		"":                                      "https://chatgpt.com/backend-api/codex/responses",
@@ -48,13 +59,64 @@ func TestCodexRequestBodyUsesMessageListInput(t *testing.T) {
 	}
 }
 
+func TestDefaultSettingsUseGPT55WithoutReasoning(t *testing.T) {
+	clearBlitzEnv(t)
+	cfg, err := parseRunFlags([]string{"--blitz-home", t.TempDir(), "Hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.model != "gpt-5.5" {
+		t.Fatalf("model = %q, want gpt-5.5", cfg.model)
+	}
+	if cfg.reasoningEffort != "" {
+		t.Fatalf("reasoning = %q, want disabled", cfg.reasoningEffort)
+	}
+	body := codexRequestBody(cfg)
+	if _, ok := body["reasoning"]; ok {
+		t.Fatalf("body included reasoning: %#v", body["reasoning"])
+	}
+}
+
+func TestConfigFileOverridesDefaults(t *testing.T) {
+	clearBlitzEnv(t)
+	blitzHome := t.TempDir()
+	model := "gpt-5.4-mini"
+	reasoning := "low"
+	if err := saveSettings(settingsPath(blitzHome), userSettings{Model: &model, ReasoningEffort: &reasoning}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := parseRunFlags([]string{"--blitz-home", blitzHome, "Hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.model != model || cfg.reasoningEffort != reasoning {
+		t.Fatalf("model/reasoning = %q/%q, want %q/%q", cfg.model, cfg.reasoningEffort, model, reasoning)
+	}
+}
+
+func TestPrintStatusShowsDefaults(t *testing.T) {
+	clearBlitzEnv(t)
+	cfg, skills, err := statusConfig([]string{"--blitz-home", t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	printStatus(&out, cfg, skills)
+	got := out.String()
+	if !strings.Contains(got, "model: gpt-5.5") || !strings.Contains(got, "reasoning: off") {
+		t.Fatalf("status output missing defaults:\n%s", got)
+	}
+}
+
 func TestParseRunFlagsLoadsSkillPromptByMarkdownFilename(t *testing.T) {
+	clearBlitzEnv(t)
+	blitzHome := t.TempDir()
 	skillsDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(skillsDir, "transcript.md"), []byte("Clean up this transcript."), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	cfg, err := parseRunFlags([]string{"--skills-dir", skillsDir, "--transcript", "Hello world ähm"})
+	cfg, err := parseRunFlags([]string{"--blitz-home", blitzHome, "--skills-dir", skillsDir, "--transcript", "Hello world ähm"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,12 +132,14 @@ func TestParseRunFlagsLoadsSkillPromptByMarkdownFilename(t *testing.T) {
 }
 
 func TestParseRunFlagsRejectsSkillAndPromptTogether(t *testing.T) {
+	clearBlitzEnv(t)
+	blitzHome := t.TempDir()
 	skillsDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(skillsDir, "transcript.md"), []byte("Clean up this transcript."), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	_, err := parseRunFlags([]string{"--skills-dir", skillsDir, "--transcript", "--prompt", "Custom prompt", "Hello"})
+	_, err := parseRunFlags([]string{"--blitz-home", blitzHome, "--skills-dir", skillsDir, "--transcript", "--prompt", "Custom prompt", "Hello"})
 	if err == nil || !strings.Contains(err.Error(), "either a skill flag or -prompt") {
 		t.Fatalf("err = %v, want skill/prompt conflict", err)
 	}
