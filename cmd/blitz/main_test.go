@@ -12,7 +12,7 @@ func clearBlitzEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{
 		"BLITZ_PROVIDER", "BLITZ_MODEL", "BLITZ_BASE_URL", "BLITZ_PROMPT",
-		"BLITZ_SERVICE_TIER", "BLITZ_REASONING_EFFORT", "BLITZ_HOME",
+		"BLITZ_REASONING_EFFORT", "BLITZ_HOME",
 		"BLITZ_SKILLS_DIR", "CODEX_HOME",
 	} {
 		t.Setenv(key, "")
@@ -55,7 +55,7 @@ func TestCodexRequestBodyUsesMessageListInput(t *testing.T) {
 		t.Fatalf("content has type %T, want []map[string]string", input[0]["content"])
 	}
 	if len(content) != 1 || content[0]["type"] != "input_text" || content[0]["text"] != "Tell me a joke" {
-		t.Fatalf("content = %#v, want input_text transcript", content)
+		t.Fatalf("content = %#v, want input_text input", content)
 	}
 }
 
@@ -74,6 +74,9 @@ func TestDefaultSettingsUseGPT55WithoutReasoning(t *testing.T) {
 	body := codexRequestBody(cfg)
 	if _, ok := body["reasoning"]; ok {
 		t.Fatalf("body included reasoning: %#v", body["reasoning"])
+	}
+	if cfg.stream {
+		t.Fatalf("stream = true, want default false")
 	}
 }
 
@@ -94,28 +97,12 @@ func TestConfigFileOverridesDefaults(t *testing.T) {
 	}
 }
 
-func TestFastServiceTierAliasSendsPriority(t *testing.T) {
-	clearBlitzEnv(t)
-	cfg, err := parseRunFlags([]string{"--blitz-home", t.TempDir(), "--service-tier", "fast", "Hello"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.serviceTier != "priority" {
-		t.Fatalf("serviceTier = %q, want priority", cfg.serviceTier)
-	}
-	body := codexRequestBody(cfg)
-	if got := body["service_tier"]; got != "priority" {
-		t.Fatalf("service_tier = %#v, want priority", got)
-	}
-}
-
 func TestFastDefaultsToPriorityForCodex(t *testing.T) {
 	clearBlitzEnv(t)
 	cfg, err := parseRunFlags([]string{"--blitz-home", t.TempDir(), "Hello"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.serviceTier = effectiveCodexServiceTier(cfg)
 	body := codexRequestBody(cfg)
 	if got := body["service_tier"]; got != "priority" {
 		t.Fatalf("service_tier = %#v, want priority", got)
@@ -131,7 +118,7 @@ func TestPrintStatusShowsDefaults(t *testing.T) {
 	var out bytes.Buffer
 	printStatus(&out, cfg, skills)
 	got := out.String()
-	if !strings.Contains(got, "model: gpt-5.5") || !strings.Contains(got, "reasoning: off") || !strings.Contains(got, "service_tier: priority (via fast)") {
+	if !strings.Contains(got, "model: gpt-5.5") || !strings.Contains(got, "reasoning: off") || !strings.Contains(got, "stream: false") {
 		t.Fatalf("status output missing defaults:\n%s", got)
 	}
 }

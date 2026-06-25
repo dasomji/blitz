@@ -1,12 +1,12 @@
 # blitz
 
-Fast transcript enhancement from the terminal.
+Fast one-off AI from the terminal, powered by Codex subscription auth.
 
-`blitz` is a small Go CLI that reads transcript text from stdin or arguments, sends it to either Codex subscription auth or an OpenAI-compatible endpoint, and prints the enhanced transcript.
+`blitz` is a small Go CLI for quick, non-agentic requests. It reads input from stdin or arguments, sends it to Codex subscription auth or an OpenAI-compatible endpoint, and prints the result without starting a bloated agent harness.
 
 ## Why Go
 
-The binary starts quickly, has no runtime package manager, and the implementation uses only the Go standard library. Network latency dominates the total runtime, so `blitz` streams output by default for lower perceived latency.
+The binary starts quickly, has no runtime package manager, and uses only the Go standard library. It is designed for scripts, text filters, launchers, and other places where you want one model call and then exit.
 
 ## Auth Modes
 
@@ -34,7 +34,7 @@ So this also works:
 
 ```sh
 codex login
-cat transcript.txt | blitz
+cat input.txt | blitz
 ```
 
 ### OpenAI-compatible API key
@@ -43,23 +43,22 @@ Use `responses` or `chat` provider mode for ordinary OpenAI-compatible endpoints
 
 ```sh
 export OPENAI_API_KEY=sk-...
-cat transcript.txt | blitz -provider responses -model gpt-5.4-mini
-cat transcript.txt | blitz -provider chat -base-url http://127.0.0.1:11434/v1 -model local-model
+cat input.txt | blitz -provider responses -model gpt-5.5
+cat input.txt | blitz -provider chat -base-url http://127.0.0.1:11434/v1 -model local-model
 ```
 
 ## Usage
 
 ```sh
-cat raw.txt | blitz > enhanced.txt
-blitz "um this is a raw transcript and it needs punctuation"
-blitz -model gpt-5.5 -reasoning low < raw.txt
-blitz -fast=false -service-tier "" < raw.txt
+blitz "Tell me a joke"
+printf '%s' "$LONG_TEXT" | blitz --summarize
+cat notes.md | blitz --prompt "Extract action items. Output bullets only."
 blitz status
 ```
 
 ## Defaults
 
-Built-in defaults use `gpt-5.5` with reasoning off. See the effective defaults with:
+Built-in defaults use `gpt-5.5`, reasoning off, fast mode on, and streaming off. See effective defaults with:
 
 ```sh
 blitz
@@ -72,12 +71,13 @@ Persist defaults in `~/.blitz/config.json` with `blitz config set`:
 ```sh
 blitz config set model gpt-5.5
 blitz config set reasoning off
-blitz config set stream true
+blitz config set stream false
+blitz config set fast true
 blitz config set timeout 10m
 blitz config unset reasoning
 ```
 
-Supported config keys: `provider`, `model`, `base-url`, `codex-home`, `skills-dir`, `prompt`, `service-tier`, `reasoning`, `max-output-tokens`, `timeout`, `stream`, and `fast`.
+Supported config keys: `provider`, `model`, `base-url`, `codex-home`, `skills-dir`, `prompt`, `reasoning`, `max-output-tokens`, `timeout`, `stream`, and `fast`.
 
 ## Skills
 
@@ -85,6 +85,20 @@ Skills are saved system prompts. Put Markdown files in `~/.blitz/skills`; the fi
 
 ```sh
 mkdir -p ~/.blitz/skills
+cat > ~/.blitz/skills/summarize.md <<'EOF'
+Summarize the input clearly. Keep only the most important points. Output bullets.
+EOF
+
+blitz --summarize "Long text goes here"
+```
+
+Use `-skills-dir` or `BLITZ_SKILLS_DIR` to point at a different skill folder.
+
+### Example: transcript cleanup
+
+A transcript cleanup workflow is just a skill:
+
+```sh
 cat > ~/.blitz/skills/transcript.md <<'EOF'
 Improve this transcript for readability and accuracy. Fix obvious ASR mistakes,
 punctuation, capitalization, speaker-flow issues, and paragraphing. Preserve
@@ -94,19 +108,34 @@ EOF
 blitz --transcript "Hello world ähm hmm here i am"
 ```
 
-Use `-skills-dir` or `BLITZ_SKILLS_DIR` to point at a different skill folder.
+## Fast mode implementation
 
-Useful flags:
+The user-facing abstraction is `fast`.
+
+As of the current Codex implementation, Codex maps Fast mode to the Responses API request field:
+
+```json
+{"service_tier":"priority"}
+```
+
+`blitz` follows that behavior: when `fast` is true and the Codex provider is used, it sends `service_tier: "priority"`. There is intentionally no user-facing service-tier setting; if Codex changes how Fast mode is represented, update this section and the `codexRequestBody` implementation.
+
+Reference checked against `openai/codex`:
+
+- `ServiceTier::Fast.request_value()` returns `"priority"`.
+- `ServiceTier::Flex.request_value()` returns `"flex"`.
+- Fast mode is feature-gated in Codex and defaults enabled there.
+
+## Flags
 
 ```text
 -provider          codex, responses, or chat
 -model             model name, default gpt-5.5
 -base-url          OpenAI-compatible base URL
--prompt            replacement transcript enhancement prompt
+-prompt            replacement system prompt
 -skills-dir        directory of skill markdown prompts
--stream            stream output as it arrives, default true
--fast              for codex, request priority service tier when unset
--service-tier      explicit Responses service_tier; fast is normalized to priority
+-stream            stream output as it arrives, default false
+-fast              for codex, request Fast mode via service_tier=priority; default true
 -reasoning         reasoning effort, default off; use low/medium/high or off/none
 -max-output-tokens optional output cap
 ```
@@ -119,7 +148,6 @@ BLITZ_MODEL
 BLITZ_BASE_URL
 BLITZ_PROMPT
 BLITZ_SKILLS_DIR
-BLITZ_SERVICE_TIER
 BLITZ_REASONING_EFFORT
 BLITZ_HOME
 CODEX_HOME

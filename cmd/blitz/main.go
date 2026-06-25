@@ -32,7 +32,7 @@ const (
 	tokenURL              = authBaseURL + "/oauth/token"
 	codexBaseURL          = "https://chatgpt.com/backend-api"
 	jwtClaimPath          = "https://api.openai.com/auth"
-	defaultPrompt         = "Improve this transcript for readability and accuracy. Fix obvious ASR mistakes, punctuation, capitalization, speaker-flow issues, and paragraphing. Preserve meaning, names, technical terms, and the original language. Do not summarize. Output only the enhanced transcript."
+	defaultPrompt         = "You are a concise, helpful assistant. Respond directly to the user's request."
 )
 
 type config struct {
@@ -45,7 +45,6 @@ type config struct {
 	skillsDir       string
 	skill           string
 	prompt          string
-	serviceTier     string
 	reasoningEffort string
 	maxOutputTokens int
 	timeout         time.Duration
@@ -61,7 +60,6 @@ type userSettings struct {
 	CodexHome       *string `json:"codex_home,omitempty"`
 	SkillsDir       *string `json:"skills_dir,omitempty"`
 	Prompt          *string `json:"prompt,omitempty"`
-	ServiceTier     *string `json:"service_tier,omitempty"`
 	ReasoningEffort *string `json:"reasoning_effort,omitempty"`
 	MaxOutputTokens *int    `json:"max_output_tokens,omitempty"`
 	Timeout         *string `json:"timeout,omitempty"`
@@ -151,8 +149,7 @@ func parseRunFlags(args []string) (config, error) {
 	fs.StringVar(&cfg.codexHome, "codex-home", cfg.codexHome, "Codex home containing auth.json")
 	fs.StringVar(&cfg.blitzHome, "blitz-home", cfg.blitzHome, "Blitz home containing auth.json")
 	fs.StringVar(&cfg.skillsDir, "skills-dir", cfg.skillsDir, "directory of skill markdown prompts")
-	fs.StringVar(&cfg.prompt, "prompt", cfg.prompt, "transcript enhancement instruction")
-	fs.StringVar(&cfg.serviceTier, "service-tier", cfg.serviceTier, "Responses service_tier, for example priority")
+	fs.StringVar(&cfg.prompt, "prompt", cfg.prompt, "system prompt")
 	fs.StringVar(&cfg.reasoningEffort, "reasoning", cfg.reasoningEffort, "reasoning effort for Responses/Codex")
 	fs.IntVar(&cfg.maxOutputTokens, "max-output-tokens", 0, "optional max output tokens")
 	fs.DurationVar(&cfg.timeout, "timeout", cfg.timeout, "request timeout")
@@ -178,7 +175,6 @@ func parseRunFlags(args []string) (config, error) {
 	if isOffValue(cfg.reasoningEffort) {
 		cfg.reasoningEffort = ""
 	}
-	cfg.serviceTier = normalizeServiceTier(cfg.serviceTier)
 
 	explicitPrompt := false
 	fs.Visit(func(f *flag.Flag) {
@@ -217,7 +213,7 @@ func parseRunFlags(args []string) (config, error) {
 		cfg.input = strings.TrimSpace(string(data))
 	}
 	if cfg.input == "" {
-		return cfg, errors.New("provide transcript text as args or stdin")
+		return cfg, errors.New("provide input text as args or stdin")
 	}
 	return cfg, nil
 }
@@ -234,10 +230,9 @@ func initialConfig(args []string) (config, error) {
 		blitzHome:       blitzHome,
 		skillsDir:       filepath.Join(blitzHome, "skills"),
 		prompt:          defaultPrompt,
-		serviceTier:     "",
 		reasoningEffort: "",
 		timeout:         10 * time.Minute,
-		stream:          true,
+		stream:          false,
 		fast:            true,
 	}
 	settings, err := loadSettings(settingsPath(blitzHome))
@@ -251,7 +246,6 @@ func initialConfig(args []string) (config, error) {
 	if isOffValue(cfg.reasoningEffort) {
 		cfg.reasoningEffort = ""
 	}
-	cfg.serviceTier = normalizeServiceTier(cfg.serviceTier)
 	cfg.blitzHome = preFlagString(args, "blitz-home", cfg.blitzHome)
 	cfg.skillsDir = preFlagString(args, "skills-dir", cfg.skillsDir)
 	return cfg, nil
@@ -314,9 +308,6 @@ func applySettings(cfg *config, settings userSettings) error {
 	if settings.Prompt != nil {
 		cfg.prompt = *settings.Prompt
 	}
-	if settings.ServiceTier != nil {
-		cfg.serviceTier = *settings.ServiceTier
-	}
 	if settings.ReasoningEffort != nil {
 		cfg.reasoningEffort = *settings.ReasoningEffort
 	}
@@ -347,7 +338,6 @@ func applyEnv(cfg *config) {
 	cfg.blitzHome = envDefault("BLITZ_HOME", cfg.blitzHome)
 	cfg.skillsDir = envDefault("BLITZ_SKILLS_DIR", cfg.skillsDir)
 	cfg.prompt = envDefault("BLITZ_PROMPT", cfg.prompt)
-	cfg.serviceTier = envDefault("BLITZ_SERVICE_TIER", cfg.serviceTier)
 	cfg.reasoningEffort = envDefault("BLITZ_REASONING_EFFORT", cfg.reasoningEffort)
 }
 
@@ -518,9 +508,6 @@ func setSetting(settings *userSettings, key, value string) error {
 		settings.SkillsDir = &s
 	case "prompt":
 		settings.Prompt = &s
-	case "service-tier":
-		s = normalizeServiceTier(value)
-		settings.ServiceTier = &s
 	case "reasoning":
 		if isOffValue(value) {
 			s = ""
@@ -569,8 +556,6 @@ func unsetSetting(settings *userSettings, key string) error {
 		settings.SkillsDir = nil
 	case "prompt":
 		settings.Prompt = nil
-	case "service-tier":
-		settings.ServiceTier = nil
 	case "reasoning":
 		settings.ReasoningEffort = nil
 	case "max-output-tokens":
@@ -605,28 +590,8 @@ func isOffValue(value string) bool {
 	}
 }
 
-func normalizeServiceTier(value string) string {
-	trimmed := strings.TrimSpace(value)
-	switch strings.ToLower(trimmed) {
-	case "", "none", "off", "false", "no", "default":
-		return ""
-	case "fast":
-		return "priority"
-	default:
-		return trimmed
-	}
-}
-
-func effectiveCodexServiceTier(cfg config) string {
-	serviceTier := normalizeServiceTier(cfg.serviceTier)
-	if serviceTier == "" && cfg.fast {
-		return "priority"
-	}
-	return serviceTier
-}
-
 func unknownSettingError(key string) error {
-	return fmt.Errorf("unknown setting %q (use provider, model, base-url, codex-home, skills-dir, prompt, service-tier, reasoning, max-output-tokens, timeout, stream, or fast)", key)
+	return fmt.Errorf("unknown setting %q (use provider, model, base-url, codex-home, skills-dir, prompt, reasoning, max-output-tokens, timeout, stream, or fast)", key)
 }
 
 func printStatus(out io.Writer, cfg config, skills []skillPrompt) {
@@ -635,25 +600,14 @@ func printStatus(out io.Writer, cfg config, skills []skillPrompt) {
 	fmt.Fprintf(out, "provider: %s\n", cfg.provider)
 	fmt.Fprintf(out, "model: %s\n", cfg.model)
 	fmt.Fprintf(out, "reasoning: %s\n", displayValue(cfg.reasoningEffort, "off"))
-	fmt.Fprintf(out, "service_tier: %s\n", displayServiceTier(cfg))
 	fmt.Fprintf(out, "stream: %t\n", cfg.stream)
 	fmt.Fprintf(out, "fast: %t\n", cfg.fast)
 	fmt.Fprintf(out, "timeout: %s\n", cfg.timeout)
 	fmt.Fprintf(out, "max_output_tokens: %s\n", displayInt(cfg.maxOutputTokens, "unlimited"))
 	fmt.Fprintf(out, "base_url: %s\n", displayValue(cfg.baseURL, "default"))
 	fmt.Fprintf(out, "skills_dir: %s\n", cfg.skillsDir)
-	fmt.Fprintf(out, "skills: %s\n", displaySkills(skills))
+	fmt.Fprintf(out, "skill_count: %d\n", len(skills))
 	fmt.Fprintf(out, "prompt: %s\n", oneLine(cfg.prompt, 96))
-}
-
-func displayServiceTier(cfg config) string {
-	if serviceTier := normalizeServiceTier(cfg.serviceTier); serviceTier != "" {
-		return serviceTier
-	}
-	if cfg.fast {
-		return "priority (via fast)"
-	}
-	return "default"
 }
 
 func displayValue(value, fallback string) string {
@@ -670,17 +624,6 @@ func displayInt(value int, fallback string) string {
 	return strconv.Itoa(value)
 }
 
-func displaySkills(skills []skillPrompt) string {
-	if len(skills) == 0 {
-		return "none"
-	}
-	names := make([]string, 0, len(skills))
-	for _, skill := range skills {
-		names = append(names, "--"+skill.Name)
-	}
-	return strings.Join(names, ", ")
-}
-
 func oneLine(value string, limit int) string {
 	value = strings.Join(strings.Fields(value), " ")
 	if len(value) <= limit {
@@ -692,7 +635,6 @@ func oneLine(value string, limit int) string {
 func enhance(ctx context.Context, cfg config, out io.Writer) error {
 	switch strings.ToLower(cfg.provider) {
 	case "codex", "openai-codex":
-		cfg.serviceTier = effectiveCodexServiceTier(cfg)
 		return callCodex(ctx, cfg, out)
 	case "responses", "openai-responses":
 		return callResponses(ctx, cfg, out)
@@ -739,12 +681,16 @@ func callCodex(ctx context.Context, cfg config, out io.Writer) error {
 	endpoint := resolveCodexURL(cfg.baseURL)
 	body := codexRequestBody(cfg)
 
+	accept := "application/json"
+	if cfg.stream {
+		accept = "text/event-stream"
+	}
 	headers := map[string]string{
 		"Authorization":       "Bearer " + auth.Tokens.AccessToken,
 		"chatgpt-account-id":  accountID,
 		"originator":          "blitz",
 		"OpenAI-Beta":         "responses=experimental",
-		"Accept":              "text/event-stream",
+		"Accept":              accept,
 		"Content-Type":        "application/json",
 		"User-Agent":          "blitz/0.1",
 		"X-Client-Request-Id": randomID(),
@@ -766,6 +712,9 @@ func codexRequestBody(cfg config) map[string]any {
 		},
 		"store":  false,
 		"stream": cfg.stream,
+	}
+	if cfg.fast {
+		body["service_tier"] = "priority"
 	}
 	addResponsesOptions(body, cfg)
 	return body
@@ -808,9 +757,6 @@ func callChat(ctx context.Context, cfg config, out io.Writer) error {
 }
 
 func addResponsesOptions(body map[string]any, cfg config) {
-	if cfg.serviceTier != "" {
-		body["service_tier"] = cfg.serviceTier
-	}
 	if cfg.reasoningEffort != "" {
 		body["reasoning"] = map[string]string{"effort": cfg.reasoningEffort}
 	}
@@ -1345,14 +1291,14 @@ func randomID() string {
 func printUsage() {
 	cfg, skills, err := statusConfig(nil)
 	if err != nil {
-		cfg = config{provider: "codex", model: "gpt-5.5", prompt: defaultPrompt, timeout: 10 * time.Minute, stream: true, fast: true}
+		cfg = config{provider: "codex", model: "gpt-5.5", prompt: defaultPrompt, timeout: 10 * time.Minute, stream: false, fast: true}
 	}
-	fmt.Fprintf(os.Stderr, `blitz - fast transcript enhancement CLI
+	fmt.Fprintf(os.Stderr, `blitz - fast one-off Codex CLI
 
 Usage:
-  blitz [flags] "raw transcript text"
-  blitz --transcript "raw transcript text"
-  cat transcript.txt | blitz [flags]
+  blitz [flags] "your request"
+  blitz --summarize "paste long text here"
+  cat input.txt | blitz [flags]
   blitz status
   blitz config set model gpt-5.5
   blitz config set reasoning off
@@ -1361,15 +1307,16 @@ Usage:
   blitz logout
 
 Defaults to Codex subscription auth. Run blitz login or codex login first.
-Skill files in ~/.blitz/skills become flags: transcript.md -> --transcript.
+Skill files in ~/.blitz/skills become flags: summarize.md -> --summarize.
 
 Current defaults:
   provider: %s
   model: %s
   reasoning: %s
-  service_tier: %s
+  stream: %t
+  fast: %t
   skills_dir: %s
-  skills: %s
+  skill_count: %d
 
 Flags:
   -provider codex|responses|chat
@@ -1379,7 +1326,6 @@ Flags:
   -skills-dir DIR
   -stream=%t
   -fast=%t
-  -service-tier %s
   -reasoning %s (use "off" or "none" to disable)
-`, cfg.provider, cfg.model, displayValue(cfg.reasoningEffort, "off"), displayServiceTier(cfg), cfg.skillsDir, displaySkills(skills), cfg.model, cfg.stream, cfg.fast, displayServiceTier(cfg), displayValue(cfg.reasoningEffort, "off"))
+`, cfg.provider, cfg.model, displayValue(cfg.reasoningEffort, "off"), cfg.stream, cfg.fast, cfg.skillsDir, len(skills), cfg.model, cfg.stream, cfg.fast, displayValue(cfg.reasoningEffort, "off"))
 }
