@@ -178,9 +178,7 @@ func parseRunFlags(args []string) (config, error) {
 	if isOffValue(cfg.reasoningEffort) {
 		cfg.reasoningEffort = ""
 	}
-	if isOffValue(cfg.serviceTier) {
-		cfg.serviceTier = ""
-	}
+	cfg.serviceTier = normalizeServiceTier(cfg.serviceTier)
 
 	explicitPrompt := false
 	fs.Visit(func(f *flag.Flag) {
@@ -253,9 +251,7 @@ func initialConfig(args []string) (config, error) {
 	if isOffValue(cfg.reasoningEffort) {
 		cfg.reasoningEffort = ""
 	}
-	if isOffValue(cfg.serviceTier) {
-		cfg.serviceTier = ""
-	}
+	cfg.serviceTier = normalizeServiceTier(cfg.serviceTier)
 	cfg.blitzHome = preFlagString(args, "blitz-home", cfg.blitzHome)
 	cfg.skillsDir = preFlagString(args, "skills-dir", cfg.skillsDir)
 	return cfg, nil
@@ -523,9 +519,7 @@ func setSetting(settings *userSettings, key, value string) error {
 	case "prompt":
 		settings.Prompt = &s
 	case "service-tier":
-		if isOffValue(value) {
-			s = ""
-		}
+		s = normalizeServiceTier(value)
 		settings.ServiceTier = &s
 	case "reasoning":
 		if isOffValue(value) {
@@ -604,11 +598,31 @@ func normalizeSettingKey(key string) string {
 
 func isOffValue(value string) bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "", "none", "off", "false", "no":
+	case "", "none", "off", "false", "no", "default":
 		return true
 	default:
 		return false
 	}
+}
+
+func normalizeServiceTier(value string) string {
+	trimmed := strings.TrimSpace(value)
+	switch strings.ToLower(trimmed) {
+	case "", "none", "off", "false", "no", "default":
+		return ""
+	case "fast":
+		return "priority"
+	default:
+		return trimmed
+	}
+}
+
+func effectiveCodexServiceTier(cfg config) string {
+	serviceTier := normalizeServiceTier(cfg.serviceTier)
+	if serviceTier == "" && cfg.fast {
+		return "priority"
+	}
+	return serviceTier
 }
 
 func unknownSettingError(key string) error {
@@ -621,7 +635,7 @@ func printStatus(out io.Writer, cfg config, skills []skillPrompt) {
 	fmt.Fprintf(out, "provider: %s\n", cfg.provider)
 	fmt.Fprintf(out, "model: %s\n", cfg.model)
 	fmt.Fprintf(out, "reasoning: %s\n", displayValue(cfg.reasoningEffort, "off"))
-	fmt.Fprintf(out, "service_tier: %s\n", displayValue(cfg.serviceTier, "default"))
+	fmt.Fprintf(out, "service_tier: %s\n", displayServiceTier(cfg))
 	fmt.Fprintf(out, "stream: %t\n", cfg.stream)
 	fmt.Fprintf(out, "fast: %t\n", cfg.fast)
 	fmt.Fprintf(out, "timeout: %s\n", cfg.timeout)
@@ -630,6 +644,16 @@ func printStatus(out io.Writer, cfg config, skills []skillPrompt) {
 	fmt.Fprintf(out, "skills_dir: %s\n", cfg.skillsDir)
 	fmt.Fprintf(out, "skills: %s\n", displaySkills(skills))
 	fmt.Fprintf(out, "prompt: %s\n", oneLine(cfg.prompt, 96))
+}
+
+func displayServiceTier(cfg config) string {
+	if serviceTier := normalizeServiceTier(cfg.serviceTier); serviceTier != "" {
+		return serviceTier
+	}
+	if cfg.fast {
+		return "priority (via fast)"
+	}
+	return "default"
 }
 
 func displayValue(value, fallback string) string {
@@ -668,9 +692,7 @@ func oneLine(value string, limit int) string {
 func enhance(ctx context.Context, cfg config, out io.Writer) error {
 	switch strings.ToLower(cfg.provider) {
 	case "codex", "openai-codex":
-		if cfg.fast && cfg.serviceTier == "" {
-			cfg.serviceTier = "priority"
-		}
+		cfg.serviceTier = effectiveCodexServiceTier(cfg)
 		return callCodex(ctx, cfg, out)
 	case "responses", "openai-responses":
 		return callResponses(ctx, cfg, out)
@@ -1359,5 +1381,5 @@ Flags:
   -fast=%t
   -service-tier %s
   -reasoning %s (use "off" or "none" to disable)
-`, cfg.provider, cfg.model, displayValue(cfg.reasoningEffort, "off"), displayValue(cfg.serviceTier, "default"), cfg.skillsDir, displaySkills(skills), cfg.model, cfg.stream, cfg.fast, displayValue(cfg.serviceTier, "default"), displayValue(cfg.reasoningEffort, "off"))
+`, cfg.provider, cfg.model, displayValue(cfg.reasoningEffort, "off"), displayServiceTier(cfg), cfg.skillsDir, displaySkills(skills), cfg.model, cfg.stream, cfg.fast, displayServiceTier(cfg), displayValue(cfg.reasoningEffort, "off"))
 }

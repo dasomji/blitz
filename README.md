@@ -106,7 +106,7 @@ Useful flags:
 -skills-dir        directory of skill markdown prompts
 -stream            stream output as it arrives, default true
 -fast              for codex, request priority service tier when unset
--service-tier      explicit Responses service_tier
+-service-tier      explicit Responses service_tier; fast is normalized to priority
 -reasoning         reasoning effort, default off; use low/medium/high or off/none
 -max-output-tokens optional output cap
 ```
