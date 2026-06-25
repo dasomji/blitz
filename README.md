@@ -58,7 +58,7 @@ blitz status
 
 ## Defaults
 
-Built-in defaults use `gpt-5.5`, reasoning off, fast mode on, and streaming off. See effective defaults with:
+Built-in defaults use `gpt-5.5`, reasoning off, fast mode on, and output streaming off. See effective defaults with:
 
 ```sh
 blitz
@@ -120,10 +120,13 @@ As of the current Codex implementation, Codex maps Fast mode to the Responses AP
 
 `blitz` follows that behavior: when `fast` is true and the Codex provider is used, it sends `service_tier: "priority"`. There is intentionally no user-facing service-tier setting; if Codex changes how Fast mode is represented, update this section and the `codexRequestBody` implementation.
 
+Codex also currently builds Responses requests with `stream: true`, and the Codex backend rejects `stream: false` with `Stream must be set to true`. In `blitz`, `-stream=false` therefore means "do not print output incrementally" rather than "ask Codex for a non-streaming response": the Codex request still uses SSE, but `blitz` buffers the SSE text and prints it once complete. For `responses` and `chat` API-key providers, `-stream=false` still sends non-streaming API requests.
+
 Reference checked against `openai/codex`:
 
 - `ServiceTier::Fast.request_value()` returns `"priority"`.
 - `ServiceTier::Flex.request_value()` returns `"flex"`.
+- `ResponsesApiRequest` is constructed with `stream: true`.
 - Fast mode is feature-gated in Codex and defaults enabled there.
 
 ## Flags
@@ -134,7 +137,7 @@ Reference checked against `openai/codex`:
 -base-url          OpenAI-compatible base URL
 -prompt            replacement system prompt
 -skills-dir        directory of skill markdown prompts
--stream            stream output as it arrives, default false
+-stream            print output as it arrives, default false
 -fast              for codex, request Fast mode via service_tier=priority; default true
 -reasoning         reasoning effort, default off; use low/medium/high or off/none
 -max-output-tokens optional output cap

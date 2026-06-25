@@ -681,16 +681,12 @@ func callCodex(ctx context.Context, cfg config, out io.Writer) error {
 	endpoint := resolveCodexURL(cfg.baseURL)
 	body := codexRequestBody(cfg)
 
-	accept := "application/json"
-	if cfg.stream {
-		accept = "text/event-stream"
-	}
 	headers := map[string]string{
 		"Authorization":       "Bearer " + auth.Tokens.AccessToken,
 		"chatgpt-account-id":  accountID,
 		"originator":          "blitz",
 		"OpenAI-Beta":         "responses=experimental",
-		"Accept":              accept,
+		"Accept":              "text/event-stream",
 		"Content-Type":        "application/json",
 		"User-Agent":          "blitz/0.1",
 		"X-Client-Request-Id": randomID(),
@@ -711,7 +707,7 @@ func codexRequestBody(cfg config) map[string]any {
 			},
 		},
 		"store":  false,
-		"stream": cfg.stream,
+		"stream": true,
 	}
 	if cfg.fast {
 		body["service_tier"] = "priority"
@@ -786,8 +782,16 @@ func postJSON(ctx context.Context, endpoint string, headers map[string]string, b
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return responseError(resp)
 	}
-	if stream || isEventStream(resp.Header.Get("Content-Type")) {
-		return readSSE(resp.Body, out)
+	if isEventStream(resp.Header.Get("Content-Type")) {
+		if stream {
+			return readSSE(resp.Body, out)
+		}
+		var buffered bytes.Buffer
+		if err := readSSE(resp.Body, &buffered); err != nil {
+			return err
+		}
+		_, err := out.Write(buffered.Bytes())
+		return err
 	}
 	return readJSONResponse(resp.Body, out)
 }

@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -74,6 +76,9 @@ func TestDefaultSettingsUseGPT55WithoutReasoning(t *testing.T) {
 	body := codexRequestBody(cfg)
 	if _, ok := body["reasoning"]; ok {
 		t.Fatalf("body included reasoning: %#v", body["reasoning"])
+	}
+	if body["stream"] != true {
+		t.Fatalf("codex request stream = %#v, want true", body["stream"])
 	}
 	if cfg.stream {
 		t.Fatalf("stream = true, want default false")
@@ -157,6 +162,24 @@ func TestParseRunFlagsRejectsSkillAndPromptTogether(t *testing.T) {
 	_, err := parseRunFlags([]string{"--blitz-home", blitzHome, "--skills-dir", skillsDir, "--transcript", "--prompt", "Custom prompt", "Hello"})
 	if err == nil || !strings.Contains(err.Error(), "either a skill flag or -prompt") {
 		t.Fatalf("err = %v, want skill/prompt conflict", err)
+	}
+}
+
+func TestPostJSONReadsSSEWhenOutputStreamingDisabled(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"done\"}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	var out bytes.Buffer
+	err := postJSON(t.Context(), server.URL, map[string]string{"Content-Type": "application/json"}, map[string]any{"stream": true}, false, &out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := out.String(), "done\n"; got != want {
+		t.Fatalf("output = %q, want %q", got, want)
 	}
 }
 
