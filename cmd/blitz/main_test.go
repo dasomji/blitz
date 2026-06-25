@@ -145,9 +145,9 @@ func TestParseRunFlagsRejectsSkillAndPromptTogether(t *testing.T) {
 	}
 }
 
-func TestPostJSONReadsSSE(t *testing.T) {
+func TestPostJSONReadsSSEWithoutContentType(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("event: response.output_text.delta\n"))
 		_, _ = w.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"done\"}\n\n"))
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))
 	}))

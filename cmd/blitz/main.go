@@ -692,10 +692,10 @@ func postJSON(ctx context.Context, endpoint string, headers map[string]string, b
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return responseError(resp)
 	}
-	if isEventStream(resp.Header.Get("Content-Type")) {
-		return readSSE(resp.Body, out)
+	if isJSON(resp.Header.Get("Content-Type")) {
+		return readJSONResponse(resp.Body, out)
 	}
-	return readJSONResponse(resp.Body, out)
+	return readSSE(resp.Body, out)
 }
 
 func readSSE(r io.Reader, out io.Writer) error {
@@ -1137,9 +1137,9 @@ func responseError(resp *http.Response) error {
 	return fmt.Errorf("HTTP %s: %s", resp.Status, msg)
 }
 
-func isEventStream(contentType string) bool {
+func isJSON(contentType string) bool {
 	mediaType, _, err := mime.ParseMediaType(contentType)
-	return err == nil && mediaType == "text/event-stream"
+	return err == nil && mediaType == "application/json"
 }
 
 func envDefault(key, fallback string) string {
