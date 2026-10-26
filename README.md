@@ -148,8 +148,8 @@ CODEX_HOME
 This repo was built with Go via `mise`:
 
 ```sh
-mise x go@1.26.4 -- go test ./...
-mise x go@1.26.4 -- go build -o blitz ./cmd/blitz
+mise x go@1.26.10 -- go test ./...
+mise x go@1.26.10 -- go build -o blitz ./cmd/blitz
 ```
 
 If Go is installed normally:
